@@ -52,95 +52,63 @@ const state = {
 
 Object.assign(state, loadStore());
 
-const map = L.map("map", {
-  zoomControl: false,
-  attributionControl: true,
-  zoomSnap: 0,
-  zoomDelta: 1,
-  wheelPxPerZoomLevel: 12,
-  wheelDebounceTime: 8,
-  zoomAnimation: true,
-  zoomAnimationThreshold: 8,
-  fadeAnimation: true,
-  markerZoomAnimation: true,
-  inertia: true,
-  inertiaDeceleration: 1800,
-  easeLinearity: 0.08,
+const STREET_STYLE = "https://tiles.openfreemap.org/styles/dark";
+const SAT_STYLE = {
+  version: 8,
+  sources: {
+    sat: {
+      type: "raster",
+      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"],
+      tileSize: 256,
+      maxzoom: 18,
+      attribution: "Bilder © Esri",
+    },
+    labels: {
+      type: "raster",
+      tiles: ["https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}"],
+      tileSize: 256,
+      maxzoom: 19,
+    },
+  },
+  layers: [
+    { id: "sat", type: "raster", source: "sat" },
+    { id: "labels", type: "raster", source: "labels", paint: { "raster-opacity": 0.9 } },
+  ],
+};
+
+const map = new maplibregl.Map({
+  container: "map",
+  style: STREET_STYLE,
+  center: [16.45, 48.2],
+  zoom: 10,
   minZoom: 8,
-  maxZoom: 20,
+  maxZoom: 18,
+  attributionControl: { compact: false },
+  dragRotate: false,
+  pitchWithRotate: false,
+  touchPitch: false,
+  fadeDuration: 0,
+  scrollZoom: true,
 });
+map.touchZoomRotate.disableRotation();
+map.scrollZoom.setZoomRate(1 / 10);
+map.scrollZoom.setWheelZoomRate(1 / 40);
 
-const tileBase = { updateWhenZooming: false, updateWhenIdle: true, keepBuffer: 8, maxZoom: 20 };
-const streets = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", Object.assign({ attribution: "&copy; OpenStreetMap", maxNativeZoom: 19 }, tileBase));
-const satellite = L.tileLayer(
-  "https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-  Object.assign({ attribution: "Bilder &copy; Esri", maxNativeZoom: 18 }, tileBase)
-);
-map.createPane("labelPane");
-map.getPane("labelPane").style.zIndex = "350";
-map.getPane("labelPane").style.pointerEvents = "none";
-const labels = L.tileLayer(
-  "https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}",
-  Object.assign({ pane: "labelPane", opacity: 0.85, maxNativeZoom: 19 }, tileBase)
-);
-
-const parcelLayer = L.layerGroup().addTo(map);
-const liveLayer = L.layerGroup().addTo(map);
-const planLayer = L.layerGroup().addTo(map);
-const linkLayer = L.layerGroup().addTo(map);
-const parcelGfx = {};
+const markers = { parcels: {}, live: {}, plan: {} };
+let overlaysReady = false;
 
 function easeS(t) {
   const x = Math.min(1, Math.max(0, t));
   return x * x * x * (x * (x * 6 - 15) + 10);
 }
 
-function glide(latlng, zoom, ms) {
-  map._stop();
-  const targetCenter = L.latLng(latlng);
-  const targetZoom = zoom == null ? map.getZoom() : map._limitZoom(zoom);
-  const from = map.project(map.getCenter());
-  const to = map.project(targetCenter);
-  const size = map.getSize();
-  const startZoom = map._zoom;
-  const w0 = Math.max(size.x, size.y);
-  const w1 = w0 * map.getZoomScale(startZoom, targetZoom);
-  const u1 = to.distanceTo(from) || 1;
-  const rho = 1.42;
-  const rho2 = rho * rho;
-  const r = (i) => {
-    const s1 = i ? -1 : 1;
-    const s2 = i ? w1 : w0;
-    const t1 = w1 * w1 - w0 * w0 + s1 * rho2 * rho2 * u1 * u1;
-    const b = t1 / (2 * s2 * rho2 * u1);
-    const sq = Math.sqrt(b * b + 1) - b;
-    return sq < 0.000000001 ? -18 : Math.log(sq);
-  };
-  const sinh = (n) => (Math.exp(n) - Math.exp(-n)) / 2;
-  const cosh = (n) => (Math.exp(n) + Math.exp(-n)) / 2;
-  const tanh = (n) => sinh(n) / cosh(n);
-  const r0 = r(0);
-  const w = (s) => w0 * (cosh(r0) / cosh(r0 + rho * s));
-  const u = (s) => (w0 * (cosh(r0) * tanh(r0 + rho * s) - sinh(r0))) / rho2;
-  const S = (r(1) - r0) / rho;
-  const duration = ms || Math.min(980, Math.max(460, Math.abs(S) * 380));
-  const start = performance.now();
-  map._moveStart(targetZoom !== startZoom, false);
-  const frame = (now) => {
-    const t = (now - start) / duration;
-    if (t < 1) {
-      const s = easeS(t) * S;
-      map._flyToFrame = requestAnimationFrame(frame);
-      map._move(
-        map.unproject(from.add(to.subtract(from).multiplyBy(u(s) / u1)), startZoom),
-        map.getScaleZoom(w0 / w(s), startZoom),
-        { flyTo: true }
-      );
-    } else {
-      map._move(targetCenter, targetZoom)._moveEnd(true);
-    }
-  };
-  map._flyToFrame = requestAnimationFrame(frame);
+function glide(center, zoom, ms) {
+  const z = Math.max(map.getMinZoom(), Math.min(map.getMaxZoom(), zoom));
+  map.stop();
+  const here = map.getCenter();
+  const dist = km({ lat: here.lat, lng: here.lng }, { lat: center[1], lng: center[0] });
+  const duration = ms != null ? ms : Math.min(1500, Math.max(520, 360 + dist * 48 + Math.abs(z - map.getZoom()) * 80));
+  map.flyTo({ center, zoom: z, duration, curve: 1.42, essential: true, easing: easeS });
 }
 
 function loadStore() {
@@ -275,11 +243,16 @@ function marks(p) {
   else if (stageOf(p.id) !== "offen") bits.push(`<span class="mark">${STAGE[stageOf(p.id)]}</span>`);
   return bits.join("");
 }
+function changesFor(id) {
+  return state.changes.filter((c) => c.parcelId === id);
+}
+
 function lineOf(p) {
   const planned = nearest(p, ["geplant", "ausbau"]);
+  const latest = changesFor(p.id)[0];
   const bits = [fmtHa(p.ha), p.zoning];
-  if (planned) bits.push(fmtKm(planned.d) + " bis " + planned.s.name);
-  if (signalOf(p)) bits.push("Meldung hängt an der Akte");
+  if (latest) bits.push(latest.text);
+  else if (planned) bits.push(fmtKm(planned.d) + " bis " + planned.s.name);
   return bits.join(" · ");
 }
 function remember(text, parcelId) {
@@ -289,36 +262,120 @@ function remember(text, parcelId) {
 }
 
 function fly(lat, lng, minZoom) {
-  glide([lat, lng], Math.max(map.getZoom(), minZoom || map.getZoom()));
+  glide([lng, lat], Math.max(map.getZoom(), minZoom || map.getZoom()));
+}
+
+function ring(lat, lng, radiusM) {
+  const pts = [];
+  for (let i = 0; i <= 64; i += 1) {
+    const bearing = (i / 64) * Math.PI * 2;
+    const dx = radiusM * Math.cos(bearing);
+    const dy = radiusM * Math.sin(bearing);
+    pts.push([lng + dx / (111320 * Math.cos((lat * Math.PI) / 180)), lat + dy / 111320]);
+  }
+  return pts;
+}
+
+function colorOf(p) {
+  if (p.altlast) return "#ff9d90";
+  if (isNew(p)) return "#ffc56d";
+  if (score(p) < 10) return "#c5ced6";
+  return "#8ee0c4";
+}
+
+function dropMarkers(bucket) {
+  Object.values(markers[bucket]).forEach((marker) => marker.remove());
+  markers[bucket] = {};
+}
+
+function pinButton(html, onClick) {
+  const el = document.createElement("button");
+  el.type = "button";
+  el.className = "map-pin";
+  el.innerHTML = html;
+  el.addEventListener("click", (event) => {
+    event.stopPropagation();
+    onClick();
+  });
+  return el;
+}
+
+function addOverlay() {
+  if (map.getSource("parcels")) return;
+  map.addSource("parcels", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  map.addSource("links", { type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  map.addLayer({
+    id: "parcel-fill",
+    type: "fill",
+    source: "parcels",
+    paint: {
+      "fill-color": ["get", "color"],
+      "fill-opacity": ["case", ["==", ["get", "hot"], 1], 0.38, 0.24],
+    },
+  });
+  map.addLayer({
+    id: "parcel-line",
+    type: "line",
+    source: "parcels",
+    paint: {
+      "line-color": ["get", "color"],
+      "line-width": ["case", ["==", ["get", "hot"], 1], 2.6, 1.8],
+    },
+  });
+  map.addLayer({
+    id: "links",
+    type: "line",
+    source: "links",
+    paint: { "line-color": "#f4f7fb", "line-width": 1.6, "line-dasharray": [1, 1.6], "line-opacity": 0.8 },
+  });
+  map.on("click", "parcel-fill", (event) => {
+    const id = event.features && event.features[0] && event.features[0].properties.id;
+    if (id) openParcel(id);
+  });
+  map.on("mouseenter", "parcel-fill", (event) => {
+    map.getCanvas().style.cursor = "pointer";
+    const id = event.features && event.features[0] && event.features[0].properties.id;
+    if (id) setHover(id);
+  });
+  map.on("mouseleave", "parcel-fill", () => {
+    map.getCanvas().style.cursor = "";
+    setHover(null);
+  });
+  map.on("click", "links", (event) => {
+    const id = event.features && event.features[0] && event.features[0].properties.station;
+    if (id) openStation(id);
+  });
+  overlaysReady = true;
 }
 
 function setBase(mode) {
   state.base = mode;
-  document.body.classList.toggle("base-map", mode === "map");
   document.body.classList.toggle("base-sat", mode === "sat");
-  if (mode === "sat") {
-    if (map.hasLayer(streets)) map.removeLayer(streets);
-    if (!map.hasLayer(satellite)) satellite.addTo(map);
-    if (!map.hasLayer(labels)) labels.addTo(map);
-    satellite.bringToBack();
-  } else {
-    if (map.hasLayer(satellite)) map.removeLayer(satellite);
-    if (map.hasLayer(labels)) map.removeLayer(labels);
-    if (!map.hasLayer(streets)) streets.addTo(map);
-    streets.bringToBack();
-  }
+  overlaysReady = false;
+  dropMarkers("parcels");
+  dropMarkers("live");
+  dropMarkers("plan");
+  map.setStyle(mode === "sat" ? SAT_STYLE : STREET_STYLE);
   document.querySelectorAll("#basemap button").forEach((btn) => btn.classList.toggle("on", btn.dataset.base === mode));
   saveStore();
 }
 
 function applyLayers() {
-  const use = (layer, on) => {
-    if (on && !map.hasLayer(layer)) layer.addTo(map);
-    if (!on && map.hasLayer(layer)) map.removeLayer(layer);
+  const show = (id, on) => {
+    if (!map.getLayer(id)) return;
+    map.setLayoutProperty(id, "visibility", on ? "visible" : "none");
   };
-  use(parcelLayer, state.layers.parcels);
-  use(liveLayer, state.layers.live);
-  use(planLayer, state.layers.plan);
+  show("parcel-fill", state.layers.parcels);
+  show("parcel-line", state.layers.parcels);
+  Object.values(markers.parcels).forEach((marker) => {
+    marker.getElement().style.display = state.layers.parcels ? "" : "none";
+  });
+  Object.values(markers.live).forEach((marker) => {
+    marker.getElement().style.display = state.layers.live ? "" : "none";
+  });
+  Object.values(markers.plan).forEach((marker) => {
+    marker.getElement().style.display = state.layers.plan ? "" : "none";
+  });
   document.querySelectorAll("#layers button").forEach((btn) => btn.classList.toggle("on", !!state.layers[btn.dataset.layer]));
 }
 
@@ -329,104 +386,90 @@ function setRight(shut) {
   btn.textContent = shut ? "‹" : "›";
   btn.setAttribute("aria-label", shut ? "Rechts ausklappen" : "Rechts einklappen");
   saveStore();
-  window.setTimeout(() => map.invalidateSize(), 720);
+  window.setTimeout(() => map.resize(), 720);
 }
 
 function drawStations() {
-  liveLayer.clearLayers();
-  planLayer.clearLayers();
+  if (!overlaysReady) return;
+  dropMarkers("live");
+  dropMarkers("plan");
   DATA.substations.forEach((s) => {
-    const icon = L.divIcon({
-      className: "pin-wrap",
-      html: `<span class="pin-stack"><span class="pin ${s.kind} ${state.stationId === s.id ? "on" : ""}"></span><span class="pin-name">${esc(s.name)}</span></span>`,
-      iconSize: [220, 28],
-      iconAnchor: [9, 14],
-    });
-    const marker = L.marker([s.lat, s.lng], { icon, zIndexOffset: 200 });
-    marker.bindTooltip(`<span class="tip"><b>${esc(s.name)}</b><span>${esc(kindLabel(s.kind))}</span></span>`, {
-      className: "glass-tip",
-      direction: "top",
-      offset: [0, -8],
-      opacity: 1,
-    });
-    marker.on("click", () => openStation(s.id));
-    marker.addTo(s.kind === "bestehend" ? liveLayer : planLayer);
+    const bucket = s.kind === "bestehend" ? "live" : "plan";
+    const el = pinButton(
+      `<span class="pin-stack"><span class="pin ${s.kind} ${state.stationId === s.id ? "on" : ""}"></span><span class="pin-name">${esc(s.name)}</span></span>`,
+      () => openStation(s.id)
+    );
+    markers[bucket][s.id] = new maplibregl.Marker({ element: el, anchor: "left" }).setLngLat([s.lng, s.lat]).addTo(map);
   });
 }
 
+function parcelData() {
+  return {
+    type: "FeatureCollection",
+    features: parcels().map((p) => ({
+      type: "Feature",
+      properties: {
+        id: p.id,
+        color: colorOf(p),
+        hot: state.parcelId === p.id || state.hover === p.id ? 1 : 0,
+      },
+      geometry: {
+        type: "Polygon",
+        coordinates: [ring(p.lat, p.lng, Math.sqrt((p.ha * 10000) / Math.PI))],
+      },
+    })),
+  };
+}
+
 function drawParcels() {
-  parcelLayer.clearLayers();
+  if (!overlaysReady) return;
+  const source = map.getSource("parcels");
+  if (source) source.setData(parcelData());
+  dropMarkers("parcels");
   parcels().forEach((p) => {
-    const hot = state.parcelId === p.id || state.hover === p.id;
-    const color = p.altlast ? "#ff9d90" : isNew(p) ? "#ffc56d" : score(p) < 10 ? "#c5ced6" : "#8ee0c4";
-    const circle = L.circle([p.lat, p.lng], {
-      radius: Math.sqrt((p.ha * 10000) / Math.PI),
-      color,
-      weight: hot ? 2.6 : 2,
-      opacity: 1,
-      fillColor: color,
-      fillOpacity: hot ? 0.34 : 0.22,
-    });
-    circle.on("click", () => openParcel(p.id));
-    circle.addTo(parcelLayer);
     const cls = ["pin"];
     if (p.altlast) cls.push("bad");
     else if (isNew(p)) cls.push("fresh");
     else if (score(p) < 10) cls.push("weak");
     if (state.parcelId === p.id) cls.push("on");
     if (state.hover === p.id) cls.push("hot");
-    const marker = L.marker([p.lat, p.lng], {
-      icon: L.divIcon({
-        className: "pin-wrap",
-        html: `<span class="pin-stack"><span class="${cls.join(" ")}"></span><span class="pin-name">${esc(p.kg)}</span></span>`,
-        iconSize: [180, 28],
-        iconAnchor: [9, 14],
-      }),
-      zIndexOffset: hot ? 700 : 400,
-    });
-    marker.bindTooltip(`<span class="tip"><b>${esc(p.kg)}</b><span>GST ${esc(p.gst)} · ${esc(fmtHa(p.ha))}</span></span>`, {
-      className: "glass-tip",
-      direction: "top",
-      offset: [0, -8],
-      opacity: 1,
-    });
-    marker.on("click", () => openParcel(p.id));
-    marker.on("mouseover", () => setHover(p.id));
-    marker.on("mouseout", () => setHover(null));
-    marker.addTo(parcelLayer);
-    parcelGfx[p.id] = { circle, marker };
+    const el = pinButton(
+      `<span class="pin-stack"><span class="${cls.join(" ")}"></span><span class="pin-name">${esc(p.kg)}</span></span>`,
+      () => openParcel(p.id)
+    );
+    el.addEventListener("mouseenter", () => setHover(p.id));
+    el.addEventListener("mouseleave", () => setHover(null));
+    markers.parcels[p.id] = new maplibregl.Marker({ element: el, anchor: "left" }).setLngLat([p.lng, p.lat]).addTo(map);
   });
 }
 
 function paintLinks() {
-  linkLayer.clearLayers();
+  if (!overlaysReady || !map.getSource("links")) return;
   const p = state.parcelId ? parcelById(state.parcelId) : null;
-  if (!p) return;
-  [nearest(p, ["bestehend"]), nearest(p, ["geplant", "ausbau"])].forEach((hit) => {
-    if (!hit) return;
-    const line = L.polyline(
-      [
-        [p.lat, p.lng],
-        [hit.s.lat, hit.s.lng],
-      ],
-      { color: "#f4f7fb", weight: 1.5, opacity: 0.75, dashArray: "1 8" }
-    );
-    line.on("click", () => openStation(hit.s.id));
-    line.addTo(linkLayer);
-  });
+  const features = [];
+  if (p) {
+    [nearest(p, ["bestehend"]), nearest(p, ["geplant", "ausbau"])].forEach((hit) => {
+      if (!hit) return;
+      features.push({
+        type: "Feature",
+        properties: { station: hit.s.id },
+        geometry: { type: "LineString", coordinates: [[p.lng, p.lat], [hit.s.lng, hit.s.lat]] },
+      });
+    });
+  }
+  map.getSource("links").setData({ type: "FeatureCollection", features });
 }
 
 function setHover(id) {
   if (state.hover === id) return;
   state.hover = id;
   document.querySelectorAll("#list .row").forEach((row) => row.classList.toggle("hot", row.dataset.id === id));
+  if (overlaysReady && map.getSource("parcels")) map.getSource("parcels").setData(parcelData());
   parcels().forEach((p) => {
-    const gfx = parcelGfx[p.id];
-    if (!gfx) return;
-    const hot = state.hover === p.id || state.parcelId === p.id;
-    const pin = gfx.marker.getElement() && gfx.marker.getElement().querySelector(".pin");
+    const marker = markers.parcels[p.id];
+    if (!marker) return;
+    const pin = marker.getElement().querySelector(".pin");
     if (pin) pin.classList.toggle("hot", state.hover === p.id);
-    gfx.circle.setStyle({ weight: hot ? 2.6 : 2, fillOpacity: hot ? 0.34 : 0.22 });
   });
 }
 
@@ -535,43 +578,71 @@ function aktenSheet() {
   </div>`;
 }
 
+function changeCards(changes) {
+  if (!changes.length) return `<p class="quiet">Seit dem Öffnen hat sich an den Akten nichts geändert.</p>`;
+  return `<div class="card-grid">${changes.map((c) => {
+    const p = c.parcelId ? parcelById(c.parcelId) : null;
+    if (!p) return `<article class="info-card"><p>${esc(c.text)}</p></article>`;
+    return `<button type="button" class="info-card" data-id="${p.id}">
+      <span class="marks">${marks(p)}</span>
+      <strong>${esc(p.kg)}</strong>
+      <em>GST ${esc(p.gst)} · ${esc(fmtHa(p.ha))}</em>
+      <p>${esc(c.text)}</p>
+    </button>`;
+  }).join("")}</div>`;
+}
+
 function reportSheet() {
   const changes = state.changes.slice();
   if (state.revealed && !changes.some((c) => c.parcelId === "sw")) {
     changes.unshift({
-      text: "Schwechat, GST 412/3. " + DATA.parcels[0].signal,
+      text: "Neu. " + DATA.parcels[0].signal,
       parcelId: "sw",
     });
   }
-  const changeHtml = changes.length
-    ? changes.map((c) => {
-        const p = c.parcelId ? parcelById(c.parcelId) : null;
-        return p ? ledger(p) : `<p>${esc(c.text)}</p>`;
-      }).join("")
-    : `<p>Seit dem Öffnen hat sich an den Akten nichts geändert.</p>`;
-  const added = state.sources.map((s) => s.name).join(", ");
-  return `<div class="sheet">
+  const working = ranked().filter((p) => stageOf(p.id) === "offen" || stageOf(p.id) === "pruefung").length;
+  const added = state.sources.map((s) => s.name);
+  const sources = BASE_SOURCES.map((s) => s.name).concat(added);
+  return `<div class="sheet brief">
     <p class="kicker">Morgenbericht</p>
-    <h2>Was heute anders ist</h2>
-    <p class="when">Ein Suchgebiet, alle Akten. Beispiel, keine echten Eigentümer.</p>
-    <p>Die Stromlage ist unverändert. An den Werken der Austrian Power Grid ist keine freie uneingeschränkte Bezugsleistung ausgewiesen. Offene Anträge auf Bezug: 14.084 Megawatt in Niederösterreich, 927 Megawatt in Wien, als Summe je Land. Stand 1. Oktober 2026. Den Anschluss sagt der Netzbetreiber zu.</p>
-    <h3>Änderungen</h3>
-    ${changeHtml}
-    <h3>Alle potenziellen Akten</h3>
-    ${ranked().map(ledger).join("")}
+    <h2>Was der Lauf gebracht hat</h2>
+    <p class="when">Ein Lauf am Morgen. Ein neues Ereignis kann sofort eine Akte öffnen. Das Gespräch zeigt dieselbe Akte und fliegt auf der Karte hin.</p>
+    <div class="metrics">
+      <div class="metric"><span>Lauf</span><strong>${state.revealed ? "liegt vor" : state.running ? "läuft" : "bereit"}</strong></div>
+      <div class="metric"><span>Änderungen</span><strong>${changes.length}</strong></div>
+      <div class="metric"><span>In Arbeit</span><strong>${working}</strong></div>
+    </div>
+    <h3>Neu oder anders</h3>
+    ${changeCards(changes)}
     <h3>Quellen</h3>
-    <p>${BASE_SOURCES.map((s) => esc(s.name)).join(" · ")}${added ? " · Im Gespräch ergänzt: " + esc(added) : ""}</p>
+    <div class="mini-row">${sources.map((name) => `<span class="mini static">${esc(name)}</span>`).join("")}</div>
   </div>`;
 }
 
+function stationCard(s) {
+  return `<button type="button" class="info-card" data-station="${s.id}">
+    <span class="mark">${esc(kindLabel(s.kind))}</span>
+    <strong>${esc(s.name)}</strong>
+    <p>${esc(s.note)}</p>
+  </button>`;
+}
+
 function powerSheet() {
-  return `<div class="sheet">
+  const live = DATA.substations.filter((s) => s.kind === "bestehend");
+  const planned = DATA.substations.filter((s) => s.kind !== "bestehend");
+  return `<div class="sheet brief">
     <p class="kicker">Strom</p>
-    <h2>Bezug für die Akte, nicht Einspeisung</h2>
-    <p class="when">Öffentliche Tabelle, fest im Prototyp. Ein Werk anklicken öffnet es auf der ganzen Fläche.</p>
-    <p>0 Megawatt freie uneingeschränkte Bezugsleistung an jedem ausgewiesenen Werk. Die Anträge sind Summen je Bundesland, nicht die freie Leistung eines einzelnen Werks. Ein Rechenzentrum braucht oft 50 bis 200 Megawatt.</p>
-    <h3>Werke</h3>
-    ${DATA.substations.map((s) => `<button type="button" class="ledger" data-station="${s.id}"><span class="ledger-top"><strong>${esc(s.name)}</strong><span class="mark">${esc(kindLabel(s.kind))}</span></span><em>${esc(s.note)}</em></button>`).join("")}
+    <h2>Bezug, nicht Einspeisung</h2>
+    <p class="when">Summen je Land, nicht die freie Leistung eines einzelnen Werks. Ein Rechenzentrum braucht oft 50 bis 200 MW. Den Anschluss sagt der Netzbetreiber zu.</p>
+    <div class="metrics">
+      <div class="metric"><span>Frei, uneingeschränkt</span><strong>0 MW</strong></div>
+      <div class="metric"><span>Anträge Niederösterreich</span><strong>14.084 MW</strong></div>
+      <div class="metric"><span>Anträge Wien</span><strong>927 MW</strong></div>
+    </div>
+    <h3>Bestehend</h3>
+    <div class="card-grid">${live.map(stationCard).join("")}</div>
+    <h3>Geplant und Ausbau</h3>
+    <div class="card-grid">${planned.map(stationCard).join("")}</div>
   </div>`;
 }
 
@@ -610,6 +681,14 @@ function whyLines(p) {
   return lines;
 }
 
+function deltaBlock(p) {
+  const rows = changesFor(p.id);
+  if (!rows.length) return "";
+  return `<section class="delta"><h3>Was sich geändert hat</h3>${rows
+    .map((c) => `<p>${esc(c.text)}</p>`)
+    .join("")}</section>`;
+}
+
 function fact(label, value) {
   return `<div class="fact"><span>${esc(label)}</span><strong>${value}</strong></div>`;
 }
@@ -624,6 +703,7 @@ function parcelFile(p) {
       <p class="kicker">Akte · Beispiel</p>
       <h2>${esc(p.kg)}</h2>
       <p class="marks">${marks(p)}</p>
+      ${deltaBlock(p)}
       <div class="facts">
         ${fact("Grundstück", "GST " + esc(p.gst))}
         ${fact("Größe", esc(fmtHa(p.ha)))}
@@ -776,7 +856,7 @@ function setView(name) {
   if (name === "karte") state.inspect = false;
   document.querySelectorAll("#nav button").forEach((btn) => btn.classList.toggle("on", btn.dataset.view === name));
   renderPane();
-  window.setTimeout(() => map.invalidateSize(), 640);
+  window.setTimeout(() => map.resize(), 640);
 }
 
 function setLive(text, running) {
@@ -992,10 +1072,10 @@ function frame() {
   const right = state.rightShut ? 40 : width < 980 ? 380 : 470;
   map.fitBounds(
     [
-      [47.98, 16.22],
-      [48.5, 16.66],
+      [16.22, 47.98],
+      [16.66, 48.5],
     ],
-    { paddingTopLeft: [left, 100], paddingBottomRight: [right, 70], animate: false }
+    { padding: { top: 100, bottom: 80, left, right }, duration: 0 }
   );
 }
 
@@ -1017,8 +1097,12 @@ function init() {
       applyLayers();
     };
   });
-  document.getElementById("zoom-in").onclick = () => glide(map.getCenter(), map.getZoom() + 1, 280);
-  document.getElementById("zoom-out").onclick = () => glide(map.getCenter(), map.getZoom() - 1, 280);
+  const nudge = (dir) => {
+    const center = map.getCenter();
+    glide([center.lng, center.lat], map.getZoom() + dir * 1.6, 260);
+  };
+  document.getElementById("zoom-in").onclick = () => nudge(1);
+  document.getElementById("zoom-out").onclick = () => nudge(-1);
   document.getElementById("chat-form").onsubmit = (event) => {
     event.preventDefault();
     const input = document.getElementById("chat-input");
@@ -1033,12 +1117,25 @@ function init() {
       input.focus();
     }
   });
-  setBase(state.base);
-  drawStations();
-  applyLayers();
+  const mount = () => {
+    if (overlaysReady) return;
+    try {
+      addOverlay();
+      drawParcels();
+      drawStations();
+      paintLinks();
+      applyLayers();
+      frame();
+    } catch (err) {
+      return;
+    }
+  };
+  map.on("styledata", mount);
+  map.on("idle", mount);
+  if (state.base === "sat") setBase("sat");
+  else document.querySelectorAll("#basemap button").forEach((btn) => btn.classList.toggle("on", btn.dataset.base === "map"));
   refresh();
-  frame();
-  window.addEventListener("resize", () => map.invalidateSize());
+  window.addEventListener("resize", () => map.resize());
   if (state.revealed) setLive("Lauf liegt vor.", false);
   else playRun();
 }
