@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Standortsuche</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="styles.css?v=5">
+  <link rel="stylesheet" href="styles.css?v=6">
 </head>
 <body>
   <div id="map"></div>
@@ -25,24 +25,12 @@
     </button>
   </header>
 
-  <aside class="glass dock dock-left">
-    <div class="dock-head">
-      <div>
-        <p class="kicker">Akten</p>
-        <h1 id="list-title">Flächen</h1>
-        <p id="list-meta"></p>
-      </div>
-      <button type="button" class="text-link" id="next">Nächste</button>
-    </div>
-    <div class="filters" id="filters"></div>
-    <div id="list"></div>
+  <aside class="glass dock dock-left" id="dock-left">
+    <div id="pane" class="pane"></div>
   </aside>
-
-  <section class="glass board" id="board" hidden></section>
 
   <button type="button" class="edge-toggle" id="right-toggle" aria-label="Rechts einklappen">›</button>
   <aside class="glass dock dock-right" id="dock-right">
-    <div id="file"></div>
     <section class="chat">
       <div class="chat-head">
         <h2>Gespräch</h2>
@@ -74,7 +62,7 @@
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="data.js?v=5"></script>
-  <script src="app.js?v=5"></script>
+  <script src="data.js?v=6"></script>
+  <script src="app.js?v=6"></script>
 </body>
 </html>

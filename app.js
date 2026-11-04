@@ -32,6 +32,7 @@ const PLACES = {
 const state = {
   view: "karte",
   filter: "alle",
+  inspect: false,
   parcelId: null,
   stationId: null,
   hover: null,
@@ -382,41 +383,42 @@ function setHover(id) {
   });
 }
 
-function renderList() {
-  const rows = filtered();
-  document.getElementById("list-title").textContent = rows.length + " Akten";
-  document.getElementById("list-meta").textContent = "Eine Liste. RZ und Gleis sind Marken, kein zweiter Auftrag.";
-  document.getElementById("list").innerHTML = rows
-    .map(
-      (p) => `<button type="button" class="row ${state.parcelId === p.id ? "on" : ""}" data-id="${p.id}">
-        <span class="row-top"><strong>${esc(p.kg)}</strong><span class="marks">${marks(p)}</span></span>
-        <em>GST ${esc(p.gst)} · ${esc(lineOf(p))}</em>
-      </button>`
-    )
-    .join("") || `<p class="quiet" style="padding:8px 10px">In diesem Filter liegt keine Akte.</p>`;
-  document.querySelectorAll("#list .row").forEach((btn) => {
-    btn.onclick = () => openParcel(btn.dataset.id);
-    btn.onmouseenter = () => setHover(btn.dataset.id);
-    btn.onmouseleave = () => setHover(null);
-  });
+function updateCounts() {
   const open = ranked().filter((p) => stageOf(p.id) === "offen" || stageOf(p.id) === "pruefung").length;
   const talk = ranked().filter((p) => stageOf(p.id) === "gespraech").length;
   document.getElementById("counts").textContent = open + " in Arbeit · " + talk + " Gespräch";
 }
 
-function renderFilters() {
-  document.getElementById("filters").innerHTML = FILTERS.map(
+function filterButtons() {
+  return `<div class="filters">${FILTERS.map(
     ([id, label]) => `<button type="button" data-filter="${id}" class="${state.filter === id ? "on" : ""}">${label}</button>`
-  ).join("");
-  document.querySelectorAll("#filters button").forEach((btn) => {
-    btn.onclick = () => {
-      state.filter = btn.dataset.filter;
-      saveStore();
-      renderFilters();
-      renderList();
-      renderBoard();
-    };
-  });
+  ).join("")}</div>`;
+}
+
+function listRows() {
+  const rows = filtered();
+  return (
+    rows
+      .map(
+        (p) => `<button type="button" class="row ${state.parcelId === p.id ? "on" : ""}" data-id="${p.id}">
+        <span class="row-top"><strong>${esc(p.kg)}</strong><span class="marks">${marks(p)}</span></span>
+        <em>GST ${esc(p.gst)} · ${esc(lineOf(p))}</em>
+      </button>`
+      )
+      .join("") || `<p class="quiet" style="padding:8px 10px">In diesem Filter liegt keine Fläche.</p>`
+  );
+}
+
+function listPane() {
+  return `<div class="dock-head">
+      <div>
+        <p class="kicker">Karte</p>
+        <h1>${filtered().length} Möglichkeiten</h1>
+      </div>
+      <button type="button" class="text-link" id="next">Nächste</button>
+    </div>
+    ${filterButtons()}
+    <div id="list">${listRows()}</div>`;
 }
 
 function ledger(p) {
@@ -427,22 +429,27 @@ function ledger(p) {
   </button>`;
 }
 
-function renderBoard() {
-  const board = document.getElementById("board");
-  const show = state.view !== "karte";
-  board.hidden = !show;
-  if (!show) return;
-  const top = board.scrollTop;
-  if (state.view === "akten") board.innerHTML = aktenSheet();
-  else if (state.view === "bericht") board.innerHTML = reportSheet();
-  else board.innerHTML = powerSheet();
-  board.querySelectorAll("[data-id]").forEach((btn) => {
-    btn.onclick = () => openParcel(btn.dataset.id, false);
-  });
-  board.querySelectorAll("[data-station]").forEach((btn) => {
-    btn.onclick = () => openStation(btn.dataset.station, false);
-  });
-  board.scrollTop = top;
+function renderPane() {
+  const pane = document.getElementById("pane");
+  const top = pane.scrollTop;
+  const wide = state.view !== "karte";
+  document.body.classList.toggle("wide", wide);
+  updateCounts();
+  if (!wide) {
+    pane.innerHTML = state.inspect && (state.parcelId || state.stationId) ? `<div class="detail detail-full">${detailBody(true)}</div>` : listPane();
+  } else {
+    const main = state.view === "akten" ? aktenSheet() : state.view === "bericht" ? reportSheet() : powerSheet();
+    const detail = state.parcelId || state.stationId ? `<aside class="detail">${detailBody(false)}</aside>` : "";
+    pane.innerHTML = `<div class="split"><div class="split-main">${main}</div>${detail}</div>`;
+  }
+  bindPane(pane);
+  if (state.parcelId) {
+    const p = parcelById(state.parcelId);
+    document.getElementById("chat-context").textContent = "Akte " + p.kg + ", GST " + p.gst;
+  } else if (state.stationId) {
+    document.getElementById("chat-context").textContent = stationById(state.stationId).name;
+  } else document.getElementById("chat-context").textContent = "Alle Akten";
+  pane.scrollTop = top;
 }
 
 function aktenSheet() {
@@ -450,7 +457,8 @@ function aktenSheet() {
   return `<div class="sheet">
     <p class="kicker">Akten</p>
     <h2>Alle Flächen in einer Liste</h2>
-    <p class="when">${rows.length} Akten. Ein Klick öffnet die Daten rechts. Die Karte bleibt darunter.</p>
+    <p class="when">${rows.length} Akten. Ein Klick öffnet die Daten daneben.</p>
+    ${filterButtons()}
     ${rows.map(ledger).join("")}
   </div>`;
 }
@@ -488,27 +496,18 @@ function powerSheet() {
   return `<div class="sheet">
     <p class="kicker">Strom</p>
     <h2>Bezug für die Akte, nicht Einspeisung</h2>
-    <p class="when">Öffentliche Tabelle, fest im Prototyp. Ein Werk anklicken öffnet es rechts.</p>
+    <p class="when">Öffentliche Tabelle, fest im Prototyp. Ein Werk anklicken öffnet es daneben.</p>
     <p>0 Megawatt freie uneingeschränkte Bezugsleistung an jedem ausgewiesenen Werk. Die Anträge sind Summen je Bundesland, nicht die freie Leistung eines einzelnen Werks. Ein Rechenzentrum braucht oft 50 bis 200 Megawatt.</p>
     <h3>Werke</h3>
     ${DATA.substations.map((s) => `<button type="button" class="ledger" data-station="${s.id}"><span class="ledger-top"><strong>${esc(s.name)}</strong><span class="mark">${esc(kindLabel(s.kind))}</span></span><em>${esc(s.note)}</em></button>`).join("")}
   </div>`;
 }
 
-function renderFile() {
-  const dock = document.getElementById("dock-right");
-  const file = document.getElementById("file");
-  dock.classList.toggle("idle", !state.parcelId && !state.stationId);
-  if (state.parcelId) file.innerHTML = parcelFile(parcelById(state.parcelId));
-  else if (state.stationId) file.innerHTML = `<div class="file-scroll">${stationFile(stationById(state.stationId))}</div>`;
-  else file.innerHTML = `<div class="file-scroll"><p class="kicker">Akte</p><h2>Keine Akte offen</h2><p class="quiet">Wähle eine Zeile oder einen Punkt auf der Karte.</p></div>`;
-  wireFile();
-  const ctx = document.getElementById("chat-context");
-  if (state.parcelId) {
-    const p = parcelById(state.parcelId);
-    ctx.textContent = "Akte " + p.kg + ", GST " + p.gst;
-  } else if (state.stationId) ctx.textContent = stationById(state.stationId).name;
-  else ctx.textContent = "Alle Akten";
+function detailBody(withBack) {
+  const back = withBack ? `<button type="button" class="back" id="back">Zur Liste</button>` : "";
+  if (state.parcelId) return back + parcelFile(parcelById(state.parcelId));
+  if (state.stationId) return back + `<div class="file-scroll">${stationFile(stationById(state.stationId))}</div>`;
+  return "";
 }
 
 function parcelFile(p) {
@@ -551,15 +550,32 @@ function stationFile(s) {
     ${near.map((hit) => `<button type="button" class="row" data-id="${hit.p.id}"><span class="row-top"><strong>${esc(hit.p.kg)}</strong></span><em>GST ${esc(hit.p.gst)} · ${esc(fmtKm(hit.d))}</em></button>`).join("")}`;
 }
 
-function wireFile() {
-  const file = document.getElementById("file");
-  file.querySelectorAll("[data-id]").forEach((btn) => {
-    btn.onclick = () => openParcel(btn.dataset.id);
+function bindPane(root) {
+  root.querySelectorAll("#list .row").forEach((btn) => {
+    btn.onmouseenter = () => setHover(btn.dataset.id);
+    btn.onmouseleave = () => setHover(null);
   });
-  file.querySelectorAll("[data-station]").forEach((btn) => {
-    btn.onclick = () => openStation(btn.dataset.station);
+  root.querySelectorAll("[data-id]").forEach((btn) => {
+    btn.onclick = () => openParcel(btn.dataset.id, state.view === "karte");
   });
-  const gb = document.getElementById("gb");
+  root.querySelectorAll("[data-station]").forEach((btn) => {
+    btn.onclick = () => openStation(btn.dataset.station, state.view === "karte");
+  });
+  root.querySelectorAll("[data-filter]").forEach((btn) => {
+    btn.onclick = () => {
+      state.filter = btn.dataset.filter;
+      saveStore();
+      renderPane();
+    };
+  });
+  const back = root.querySelector("#back");
+  if (back) back.onclick = () => {
+    state.inspect = false;
+    renderPane();
+  };
+  const next = root.querySelector("#next");
+  if (next) next.onclick = nextParcel;
+  const gb = root.querySelector("#gb");
   if (gb) {
     gb.onclick = () => {
       const id = state.parcelId;
@@ -572,7 +588,7 @@ function wireFile() {
       addBot(p.kg + ", GST " + p.gst + ": Beispielname " + p.owner + ". Angesetzt mit 2,60 €.");
     };
   }
-  file.querySelectorAll("[data-stage]").forEach((btn) => {
+  root.querySelectorAll("[data-stage]").forEach((btn) => {
     btn.onclick = () => setStage(state.parcelId, btn.dataset.stage);
   });
 }
@@ -587,10 +603,7 @@ function setStage(id, next) {
 }
 
 function refresh() {
-  renderFilters();
-  renderList();
-  renderBoard();
-  renderFile();
+  renderPane();
   drawParcels();
   drawStations();
   paintLinks();
@@ -600,24 +613,25 @@ function refresh() {
 function openParcel(id, move) {
   state.parcelId = id;
   state.stationId = null;
+  if (state.view === "karte") state.inspect = true;
   const p = parcelById(id);
   if (move !== false && p) fly(p.lat, p.lng, 12.25);
-  if (state.rightShut) setRight(false);
   refresh();
 }
 
 function openStation(id, move) {
   state.stationId = id;
   state.parcelId = null;
+  if (state.view === "karte") state.inspect = true;
   const s = stationById(id);
   if (move !== false && s) fly(s.lat, s.lng, 11.5);
-  if (state.rightShut) setRight(false);
   refresh();
 }
 
 function clearFocus() {
   state.parcelId = null;
   state.stationId = null;
+  state.inspect = false;
   refresh();
 }
 
@@ -628,10 +642,10 @@ function nextParcel() {
 
 function setView(name) {
   state.view = name;
-  document.body.classList.toggle("board-on", name !== "karte");
+  if (name === "karte") state.inspect = false;
   document.querySelectorAll("#nav button").forEach((btn) => btn.classList.toggle("on", btn.dataset.view === name));
-  renderBoard();
-  window.setTimeout(() => map.invalidateSize(), 40);
+  renderPane();
+  window.setTimeout(() => map.invalidateSize(), 640);
 }
 
 function setLive(text, running) {
@@ -670,7 +684,7 @@ function addSource(name) {
   if (!clean) return;
   state.sources.push({ name: clean });
   saveStore();
-  renderBoard();
+  renderPane();
 }
 
 function addAkte(kg) {
@@ -860,7 +874,6 @@ function init() {
   document.querySelectorAll("#nav button").forEach((btn) => {
     btn.onclick = () => setView(btn.dataset.view);
   });
-  document.getElementById("next").onclick = nextParcel;
   document.getElementById("right-toggle").onclick = () => setRight(!state.rightShut);
   document.getElementById("live").onclick = () => setView("bericht");
   document.querySelectorAll("#basemap button").forEach((btn) => {
