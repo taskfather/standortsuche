@@ -8,64 +8,73 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header>
+  <div id="map"></div>
+
+  <header class="glass topbar">
     <div class="brand">Standortsuche</div>
-    <nav>
-      <button type="button" data-view="karte" class="on">Karte</button>
-      <button type="button" data-view="bericht">Morgenbericht</button>
-      <button type="button" data-view="strom">Stromlage</button>
+    <nav class="seg" id="nav">
+      <button type="button" data-view="flaechen" class="on">Flächen</button>
+      <button type="button" data-view="bericht">Bericht</button>
+      <button type="button" data-view="strom">Strom</button>
     </nav>
+    <div class="counts" id="counts"></div>
     <label class="mandate">
-      <span>Auftrag</span>
-      <select id="mandate"></select>
+      <select id="mandate" aria-label="Auftrag"></select>
     </label>
-    <div class="live" id="live">
-      <span class="dot" id="dot"></span>
-      <span id="live-text">Seite bereit</span>
-    </div>
+    <button type="button" class="live" id="live">
+      <span class="dot"></span>
+      <span id="live-text">Bereit</span>
+    </button>
   </header>
 
-  <div class="shell">
-    <main>
-      <section id="view-karte" class="view on">
-        <div id="map"></div>
-        <div class="legend">
-          <span><i class="swatch parcel"></i> Fläche</span>
-          <span><i class="swatch uw"></i> Werk, bestehend</span>
-          <span><i class="swatch planned"></i> Werk, geplant</span>
+  <aside class="glass dock dock-left">
+    <section id="panel-flaechen" class="panel on">
+      <div class="dock-head">
+        <div>
+          <p class="kicker">Auftrag</p>
+          <h1 id="mandate-title"></h1>
+          <p id="mandate-meta"></p>
         </div>
-      </section>
-      <section id="view-bericht" class="view reading">
-        <article class="prose" id="report"></article>
-      </section>
-      <section id="view-strom" class="view reading">
-        <article class="prose" id="power"></article>
-      </section>
-    </main>
-
-    <aside>
-      <div id="list-wrap">
-        <div class="aside-head">
-          <h2>Flächen</h2>
-          <p id="list-note"></p>
-        </div>
-        <div id="list"></div>
+        <button type="button" class="pill" id="next">Nächste Fläche</button>
       </div>
-      <div id="sheet" hidden></div>
-    </aside>
+      <div class="filters" id="filters"></div>
+      <div id="list"></div>
+      <div class="runlog" id="runlog"></div>
+    </section>
+    <section id="panel-bericht" class="panel reader"></section>
+    <section id="panel-strom" class="panel reader"></section>
+  </aside>
 
-    <section id="chat">
-      <div class="aside-head">
-        <h2>Fragen</h2>
-        <p>Antworten nur aus den Daten auf dieser Seite.</p>
+  <aside class="glass dock dock-right" id="dock-right">
+    <div id="file"></div>
+    <section class="chat">
+      <div class="chat-head">
+        <h2>Gespräch</h2>
+        <p id="chat-context">Zum ganzen Auftrag</p>
       </div>
       <div id="chat-log"></div>
-      <div class="chips" id="chips"></div>
-      <form id="chat-form">
-        <input id="chat-input" type="text" placeholder="Frage zur Fläche, zum Bericht, zum Strom" autocomplete="off">
-        <button type="submit">Senden</button>
+      <form id="chat-form" class="composer">
+        <input id="chat-input" type="text" placeholder="Nachricht schreiben" autocomplete="off">
+        <button type="submit" aria-label="Senden">↑</button>
       </form>
     </section>
+  </aside>
+
+  <div class="map-pills">
+    <div class="glass seg" id="basemap">
+      <button type="button" data-base="map" class="on">Karte</button>
+      <button type="button" data-base="sat">Satellit</button>
+    </div>
+    <div class="glass seg" id="layers">
+      <button type="button" data-layer="parcels" class="on"><i class="swatch parcel"></i>Flächen</button>
+      <button type="button" data-layer="live" class="on"><i class="swatch live"></i>Bestehend</button>
+      <button type="button" data-layer="plan" class="on"><i class="swatch plan"></i>Geplant</button>
+    </div>
+  </div>
+
+  <div class="glass zoomer">
+    <button type="button" id="zoom-in" aria-label="Näher">+</button>
+    <button type="button" id="zoom-out" aria-label="Weiter">−</button>
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
