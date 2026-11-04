@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Standortsuche</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header>
+    <div class="brand">Standortsuche</div>
+    <nav>
+      <button type="button" data-view="karte" class="on">Karte</button>
+      <button type="button" data-view="bericht">Morgenbericht</button>
+      <button type="button" data-view="strom">Stromlage</button>
+    </nav>
+    <label class="mandate">
+      <span>Auftrag</span>
+      <select id="mandate"></select>
+    </label>
+    <div class="live" id="live">
+      <span class="dot" id="dot"></span>
+      <span id="live-text">Seite bereit</span>
+    </div>
+  </header>
+
+  <div class="shell">
+    <main>
+      <section id="view-karte" class="view on">
+        <div id="map"></div>
+        <div class="legend">
+          <span><i class="swatch parcel"></i> Fläche</span>
+          <span><i class="swatch uw"></i> Werk, bestehend</span>
+          <span><i class="swatch planned"></i> Werk, geplant</span>
+        </div>
+      </section>
+      <section id="view-bericht" class="view reading">
+        <article class="prose" id="report"></article>
+      </section>
+      <section id="view-strom" class="view reading">
+        <article class="prose" id="power"></article>
+      </section>
+    </main>
+
+    <aside>
+      <div id="list-wrap">
+        <div class="aside-head">
+          <h2>Flächen</h2>
+          <p id="list-note"></p>
+        </div>
+        <div id="list"></div>
+      </div>
+      <div id="sheet" hidden></div>
+    </aside>
+
+    <section id="chat">
+      <div class="aside-head">
+        <h2>Fragen</h2>
+        <p>Antworten nur aus den Daten auf dieser Seite.</p>
+      </div>
+      <div id="chat-log"></div>
+      <div class="chips" id="chips"></div>
+      <form id="chat-form">
+        <input id="chat-input" type="text" placeholder="Frage zur Fläche, zum Bericht, zum Strom" autocomplete="off">
+        <button type="submit">Senden</button>
+      </form>
+    </section>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="data.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
