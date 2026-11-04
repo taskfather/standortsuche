@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Standortsuche</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=5">
 </head>
 <body>
   <div id="map"></div>
@@ -13,14 +13,12 @@
   <header class="glass topbar">
     <div class="brand">Standortsuche</div>
     <nav class="seg" id="nav">
-      <button type="button" data-view="flaechen" class="on">Flächen</button>
+      <button type="button" data-view="karte" class="on">Karte</button>
+      <button type="button" data-view="akten">Akten</button>
       <button type="button" data-view="bericht">Bericht</button>
       <button type="button" data-view="strom">Strom</button>
     </nav>
     <div class="counts" id="counts"></div>
-    <label class="mandate">
-      <select id="mandate" aria-label="Auftrag"></select>
-    </label>
     <button type="button" class="live" id="live">
       <span class="dot"></span>
       <span id="live-text">Bereit</span>
@@ -28,33 +26,31 @@
   </header>
 
   <aside class="glass dock dock-left">
-    <section id="panel-flaechen" class="panel on">
-      <div class="dock-head">
-        <div>
-          <p class="kicker">Auftrag</p>
-          <h1 id="mandate-title"></h1>
-          <p id="mandate-meta"></p>
-        </div>
-        <button type="button" class="pill" id="next">Nächste Fläche</button>
+    <div class="dock-head">
+      <div>
+        <p class="kicker">Akten</p>
+        <h1 id="list-title">Flächen</h1>
+        <p id="list-meta"></p>
       </div>
-      <div class="filters" id="filters"></div>
-      <div id="list"></div>
-      <div class="runlog" id="runlog"></div>
-    </section>
-    <section id="panel-bericht" class="panel reader"></section>
-    <section id="panel-strom" class="panel reader"></section>
+      <button type="button" class="text-link" id="next">Nächste</button>
+    </div>
+    <div class="filters" id="filters"></div>
+    <div id="list"></div>
   </aside>
 
+  <section class="glass board" id="board" hidden></section>
+
+  <button type="button" class="edge-toggle" id="right-toggle" aria-label="Rechts einklappen">›</button>
   <aside class="glass dock dock-right" id="dock-right">
     <div id="file"></div>
     <section class="chat">
       <div class="chat-head">
         <h2>Gespräch</h2>
-        <p id="chat-context">Zum ganzen Auftrag</p>
+        <p id="chat-context">Alle Akten</p>
       </div>
       <div id="chat-log"></div>
       <form id="chat-form" class="composer">
-        <input id="chat-input" type="text" placeholder="Nachricht schreiben" autocomplete="off">
+        <input id="chat-input" type="text" placeholder="Akte, Karte oder Quelle ansprechen" autocomplete="off">
         <button type="submit" aria-label="Senden">↑</button>
       </form>
     </section>
@@ -78,7 +74,7 @@
   </div>
 
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <script src="data.js"></script>
-  <script src="app.js"></script>
+  <script src="data.js?v=5"></script>
+  <script src="app.js?v=5"></script>
 </body>
 </html>
