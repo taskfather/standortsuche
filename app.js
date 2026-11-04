@@ -55,9 +55,9 @@ const map = L.map("map", {
   zoomControl: false,
   attributionControl: true,
   zoomSnap: 0,
-  zoomDelta: 0.2,
-  wheelPxPerZoomLevel: 280,
-  wheelDebounceTime: 12,
+  zoomDelta: 1,
+  wheelPxPerZoomLevel: 42,
+  wheelDebounceTime: 8,
   zoomAnimation: true,
   zoomAnimationThreshold: 8,
   fadeAnimation: true,
@@ -89,10 +89,58 @@ const planLayer = L.layerGroup().addTo(map);
 const linkLayer = L.layerGroup().addTo(map);
 const parcelGfx = {};
 
-map.on("zoomstart movestart", () => document.body.classList.add("is-moving"));
-map.on("zoomend moveend", () => {
-  window.setTimeout(() => document.body.classList.remove("is-moving"), 120);
-});
+function easeS(t) {
+  const x = Math.min(1, Math.max(0, t));
+  return x * x * x * (x * (x * 6 - 15) + 10);
+}
+
+function glide(latlng, zoom, ms) {
+  map._stop();
+  const targetCenter = L.latLng(latlng);
+  const targetZoom = zoom == null ? map.getZoom() : map._limitZoom(zoom);
+  const from = map.project(map.getCenter());
+  const to = map.project(targetCenter);
+  const size = map.getSize();
+  const startZoom = map._zoom;
+  const w0 = Math.max(size.x, size.y);
+  const w1 = w0 * map.getZoomScale(startZoom, targetZoom);
+  const u1 = to.distanceTo(from) || 1;
+  const rho = 1.42;
+  const rho2 = rho * rho;
+  const r = (i) => {
+    const s1 = i ? -1 : 1;
+    const s2 = i ? w1 : w0;
+    const t1 = w1 * w1 - w0 * w0 + s1 * rho2 * rho2 * u1 * u1;
+    const b = t1 / (2 * s2 * rho2 * u1);
+    const sq = Math.sqrt(b * b + 1) - b;
+    return sq < 0.000000001 ? -18 : Math.log(sq);
+  };
+  const sinh = (n) => (Math.exp(n) - Math.exp(-n)) / 2;
+  const cosh = (n) => (Math.exp(n) + Math.exp(-n)) / 2;
+  const tanh = (n) => sinh(n) / cosh(n);
+  const r0 = r(0);
+  const w = (s) => w0 * (cosh(r0) / cosh(r0 + rho * s));
+  const u = (s) => (w0 * (cosh(r0) * tanh(r0 + rho * s) - sinh(r0))) / rho2;
+  const S = (r(1) - r0) / rho;
+  const duration = ms || Math.min(980, Math.max(460, Math.abs(S) * 380));
+  const start = performance.now();
+  map._moveStart(targetZoom !== startZoom, false);
+  const frame = (now) => {
+    const t = (now - start) / duration;
+    if (t < 1) {
+      const s = easeS(t) * S;
+      map._flyToFrame = requestAnimationFrame(frame);
+      map._move(
+        map.unproject(from.add(to.subtract(from).multiplyBy(u(s) / u1)), startZoom),
+        map.getScaleZoom(w0 / w(s), startZoom),
+        { flyTo: true }
+      );
+    } else {
+      map._move(targetCenter, targetZoom)._moveEnd(true);
+    }
+  };
+  map._flyToFrame = requestAnimationFrame(frame);
+}
 
 function loadStore() {
   try {
@@ -240,9 +288,7 @@ function remember(text, parcelId) {
 }
 
 function fly(lat, lng, minZoom) {
-  const zoom = Math.max(map.getZoom(), minZoom || map.getZoom());
-  document.body.classList.add("is-moving");
-  map.flyTo([lat, lng], zoom, { animate: true, duration: 1.85, easeLinearity: 0.05 });
+  glide([lat, lng], Math.max(map.getZoom(), minZoom || map.getZoom()));
 }
 
 function setBase(mode) {
@@ -291,9 +337,9 @@ function drawStations() {
   DATA.substations.forEach((s) => {
     const icon = L.divIcon({
       className: "pin-wrap",
-      html: `<span class="pin ${s.kind} ${state.stationId === s.id ? "on" : ""}"></span>`,
-      iconSize: [32, 32],
-      iconAnchor: [16, 16],
+      html: `<span class="pin-stack"><span class="pin ${s.kind} ${state.stationId === s.id ? "on" : ""}"></span><span class="pin-name">${esc(s.name)}</span></span>`,
+      iconSize: [220, 28],
+      iconAnchor: [9, 14],
     });
     const marker = L.marker([s.lat, s.lng], { icon, zIndexOffset: 200 });
     marker.bindTooltip(`<span class="tip"><b>${esc(s.name)}</b><span>${esc(kindLabel(s.kind))}</span></span>`, {
@@ -315,10 +361,10 @@ function drawParcels() {
     const circle = L.circle([p.lat, p.lng], {
       radius: Math.sqrt((p.ha * 10000) / Math.PI),
       color,
-      weight: hot ? 2.2 : 1.2,
-      opacity: 0.95,
+      weight: hot ? 2.6 : 2,
+      opacity: 1,
       fillColor: color,
-      fillOpacity: hot ? 0.28 : 0.14,
+      fillOpacity: hot ? 0.34 : 0.22,
     });
     circle.on("click", () => openParcel(p.id));
     circle.addTo(parcelLayer);
@@ -331,9 +377,9 @@ function drawParcels() {
     const marker = L.marker([p.lat, p.lng], {
       icon: L.divIcon({
         className: "pin-wrap",
-        html: `<span class="${cls.join(" ")}"></span>`,
-        iconSize: [34, 34],
-        iconAnchor: [17, 17],
+        html: `<span class="pin-stack"><span class="${cls.join(" ")}"></span><span class="pin-name">${esc(p.kg)}</span></span>`,
+        iconSize: [180, 28],
+        iconAnchor: [9, 14],
       }),
       zIndexOffset: hot ? 700 : 400,
     });
@@ -379,7 +425,7 @@ function setHover(id) {
     const hot = state.hover === p.id || state.parcelId === p.id;
     const pin = gfx.marker.getElement() && gfx.marker.getElement().querySelector(".pin");
     if (pin) pin.classList.toggle("hot", state.hover === p.id);
-    gfx.circle.setStyle({ weight: hot ? 2.2 : 1.2, fillOpacity: hot ? 0.28 : 0.14 });
+    gfx.circle.setStyle({ weight: hot ? 2.6 : 2, fillOpacity: hot ? 0.34 : 0.22 });
   });
 }
 
@@ -452,14 +498,37 @@ function renderPane() {
   pane.scrollTop = top;
 }
 
+function werkOf(p) {
+  const hit = nearest(p, ["geplant", "ausbau"]) || nearest(p, ["bestehend"]);
+  return hit ? fmtKm(hit.d) + " · " + hit.s.name : "—";
+}
+
 function aktenSheet() {
   const rows = filtered();
-  return `<div class="sheet">
-    <p class="kicker">Akten</p>
-    <h2>Alle Flächen in einer Liste</h2>
-    <p class="when">${rows.length} Akten. Ein Klick öffnet die Daten daneben.</p>
+  const body = rows
+    .map((p) => {
+      const stage = stageOf(p.id);
+      const note = signalOf(p);
+      return `<button type="button" class="akten-row ${state.parcelId === p.id ? "on" : ""}" data-id="${p.id}">
+        <span class="akten-name"><strong>${esc(p.kg)}</strong><em>GST ${esc(p.gst)}</em>${note ? `<em class="akten-note">${esc(note)}</em>` : ""}</span>
+        <span class="marks">${marks(p)}</span>
+        <span class="num">${esc(fmtHa(p.ha))}</span>
+        <span>${esc(p.zoning)}</span>
+        <span>${esc(werkOf(p))}</span>
+        <span class="status ${stage}">${STAGE[stage]}</span>
+      </button>`;
+    })
+    .join("") || `<p class="quiet">In diesem Filter liegt keine Akte.</p>`;
+  return `<div class="akten">
+    <div class="akten-bar">
+      <div><p class="kicker">Liste</p><h2>Akten</h2></div>
+      <span class="akten-count">${rows.length} Flächen</span>
+    </div>
     ${filterButtons()}
-    ${rows.map(ledger).join("")}
+    <div class="akten-scroll">
+      <div class="akten-head"><span>Fläche</span><span>Marke</span><span>Größe</span><span>Widmung</span><span>Nächstes Werk</span><span>Stand</span></div>
+      ${body}
+    </div>
   </div>`;
 }
 
@@ -886,14 +955,8 @@ function init() {
       applyLayers();
     };
   });
-  document.getElementById("zoom-in").onclick = () => {
-    document.body.classList.add("is-moving");
-    map.flyTo(map.getCenter(), map.getZoom() + 0.35, { duration: 0.7, easeLinearity: 0.08 });
-  };
-  document.getElementById("zoom-out").onclick = () => {
-    document.body.classList.add("is-moving");
-    map.flyTo(map.getCenter(), Math.max(8, map.getZoom() - 0.35), { duration: 0.7, easeLinearity: 0.08 });
-  };
+  document.getElementById("zoom-in").onclick = () => glide(map.getCenter(), map.getZoom() + 1, 280);
+  document.getElementById("zoom-out").onclick = () => glide(map.getCenter(), map.getZoom() - 1, 280);
   document.getElementById("chat-form").onsubmit = (event) => {
     event.preventDefault();
     const input = document.getElementById("chat-input");
