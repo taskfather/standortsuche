@@ -33,6 +33,7 @@ const state = {
   view: "karte",
   filter: "alle",
   inspect: false,
+  cover: false,
   parcelId: null,
   stationId: null,
   hover: null,
@@ -56,7 +57,7 @@ const map = L.map("map", {
   attributionControl: true,
   zoomSnap: 0,
   zoomDelta: 1,
-  wheelPxPerZoomLevel: 42,
+  wheelPxPerZoomLevel: 12,
   wheelDebounceTime: 8,
   zoomAnimation: true,
   zoomAnimationThreshold: 8,
@@ -461,7 +462,7 @@ function listPane() {
         <p class="kicker">Karte</p>
         <h1>${filtered().length} Möglichkeiten</h1>
       </div>
-      <button type="button" class="text-link" id="next">Nächste</button>
+      <button type="button" class="mini" id="next">Nächste</button>
     </div>
     ${filterButtons()}
     <div id="list">${listRows()}</div>`;
@@ -481,12 +482,14 @@ function renderPane() {
   const wide = state.view !== "karte";
   document.body.classList.toggle("wide", wide);
   updateCounts();
+  const open = !!(state.parcelId || state.stationId);
   if (!wide) {
-    pane.innerHTML = state.inspect && (state.parcelId || state.stationId) ? `<div class="detail detail-full">${detailBody(true)}</div>` : listPane();
+    pane.innerHTML = state.inspect && open ? dossier("Zur Liste") : listPane();
+  } else if (state.cover && open) {
+    pane.innerHTML = dossier("Zurück");
   } else {
     const main = state.view === "akten" ? aktenSheet() : state.view === "bericht" ? reportSheet() : powerSheet();
-    const detail = state.parcelId || state.stationId ? `<aside class="detail">${detailBody(false)}</aside>` : "";
-    pane.innerHTML = `<div class="split"><div class="split-main">${main}</div>${detail}</div>`;
+    pane.innerHTML = `<div class="split"><div class="split-main">${main}</div></div>`;
   }
   bindPane(pane);
   if (state.parcelId) {
@@ -565,18 +568,50 @@ function powerSheet() {
   return `<div class="sheet">
     <p class="kicker">Strom</p>
     <h2>Bezug für die Akte, nicht Einspeisung</h2>
-    <p class="when">Öffentliche Tabelle, fest im Prototyp. Ein Werk anklicken öffnet es daneben.</p>
+    <p class="when">Öffentliche Tabelle, fest im Prototyp. Ein Werk anklicken öffnet es auf der ganzen Fläche.</p>
     <p>0 Megawatt freie uneingeschränkte Bezugsleistung an jedem ausgewiesenen Werk. Die Anträge sind Summen je Bundesland, nicht die freie Leistung eines einzelnen Werks. Ein Rechenzentrum braucht oft 50 bis 200 Megawatt.</p>
     <h3>Werke</h3>
     ${DATA.substations.map((s) => `<button type="button" class="ledger" data-station="${s.id}"><span class="ledger-top"><strong>${esc(s.name)}</strong><span class="mark">${esc(kindLabel(s.kind))}</span></span><em>${esc(s.note)}</em></button>`).join("")}
   </div>`;
 }
 
-function detailBody(withBack) {
-  const back = withBack ? `<button type="button" class="back" id="back">Zur Liste</button>` : "";
-  if (state.parcelId) return back + parcelFile(parcelById(state.parcelId));
-  if (state.stationId) return back + `<div class="file-scroll">${stationFile(stationById(state.stationId))}</div>`;
-  return "";
+function dossier(backLabel) {
+  const body = state.parcelId ? parcelFile(parcelById(state.parcelId)) : `<div class="file-scroll">${stationFile(stationById(state.stationId))}</div>`;
+  const nav = state.parcelId
+    ? `<span class="dossier-nav"><button type="button" class="mini" id="prev">Vorherige</button><button type="button" class="mini" id="next-file">Nächste</button></span>`
+    : "";
+  return `<div class="dossier">
+    <div class="dossier-bar">
+      <button type="button" class="mini" id="back">${esc(backLabel)}</button>
+      ${nav}
+    </div>
+    ${body}
+  </div>`;
+}
+
+function whyLines(p) {
+  const planned = nearest(p, ["geplant", "ausbau"]);
+  const existing = nearest(p, ["bestehend"]);
+  const lines = [];
+  if (p.ha >= 2) lines.push(fmtHa(p.ha) + ", damit über der Schwelle von 2 ha für ein Rechenzentrum.");
+  else if (p.ha >= 1.5) lines.push(fmtHa(p.ha) + ", unter 2 ha und deshalb kein Rechenzentrum, über 1,5 ha.");
+  else lines.push(fmtHa(p.ha) + ", unter 1,5 ha. Die Fläche bleibt sichtbar, sie ist zu klein.");
+  lines.push("Widmung im Beispiel: " + p.zoning + ".");
+  lines.push(p.altlast ? "Altlast im Beispiel. Damit fällt sie für Rechenzentrum und Gleis weg." : "Keine Altlast im Beispiel.");
+  lines.push(p.rail ? "Gleisanschluss im Beispiel. Damit passt sie auch zur Logistik." : "Kein Gleis im Beispiel.");
+  if (planned) {
+    const kind = kindLabel(planned.s.kind);
+    const name = planned.s.name.toLowerCase().includes(kind.toLowerCase()) ? planned.s.name : planned.s.name + ", " + kind;
+    lines.push(fmtKm(planned.d) + " bis " + name + ". " + planned.s.note);
+  }
+  if (existing) lines.push(fmtKm(existing.d) + " bis " + existing.s.name + ", bestehend. " + existing.s.note);
+  lines.push("Öffentliche Tabelle: 0 MW freie uneingeschränkte Bezugsleistung. Die Nähe zu einem Werk ist keine Anschlusszusage.");
+  if (signalOf(p)) lines.push(signalOf(p));
+  return lines;
+}
+
+function fact(label, value) {
+  return `<div class="fact"><span>${esc(label)}</span><strong>${value}</strong></div>`;
 }
 
 function parcelFile(p) {
@@ -588,15 +623,24 @@ function parcelFile(p) {
     <div class="file-scroll">
       <p class="kicker">Akte · Beispiel</p>
       <h2>${esc(p.kg)}</h2>
-      <p class="quiet">GST ${esc(p.gst)} · ${esc(STAGE[stage])} · ${score(p)} Interesse</p>
-      <p class="marks" style="margin-top:8px">${marks(p)}</p>
-      <p class="meta-line">${esc(fmtHa(p.ha))} · ${esc(p.zoning)}<br>
-        <button type="button" data-station="${existing.s.id}">${esc(fmtKm(existing.d))} ${esc(existing.s.name)}</button>
-        · <button type="button" data-station="${planned.s.id}">${esc(fmtKm(planned.d))} ${esc(planned.s.name)}</button><br>
-        ${p.rail ? "Gleis im Beispiel" : "Kein Gleis im Beispiel"} · ${p.altlast ? "Altlast im Beispiel" : "Keine Altlast im Beispiel"}
-      </p>
-      ${signalOf(p) ? `<p class="note">${esc(signalOf(p))}</p>` : ""}
-      <p class="meta-line" id="owner-line">${opened ? "Eigentümer im Beispiel: " + esc(p.owner) : "Eigentümer noch nicht in der Akte."}</p>
+      <p class="marks">${marks(p)}</p>
+      <div class="facts">
+        ${fact("Grundstück", "GST " + esc(p.gst))}
+        ${fact("Größe", esc(fmtHa(p.ha)))}
+        ${fact("Widmung", esc(p.zoning))}
+        ${fact("Stand", esc(STAGE[stage]))}
+        ${fact("Gleis", p.rail ? "Ja, im Beispiel" : "Nein")}
+        ${fact("Altlast", p.altlast ? "Ja, im Beispiel" : "Nein")}
+        ${fact("Interesse", String(score(p)))}
+        ${fact("Eigentümer", opened ? esc(p.owner) : "Noch nicht geholt")}
+      </div>
+      <h3>Warum diese Fläche</h3>
+      <ul class="why">${whyLines(p).map((line) => `<li>${esc(line)}</li>`).join("")}</ul>
+      <h3>Werke</h3>
+      <div class="mini-row">
+        <button type="button" class="mini" data-station="${existing.s.id}">${esc(fmtKm(existing.d))} · ${esc(existing.s.name)}</button>
+        <button type="button" class="mini" data-station="${planned.s.id}">${esc(fmtKm(planned.d))} · ${esc(planned.s.name)}</button>
+      </div>
     </div>
     <div class="file-actions">
       ${p.owner ? `<button type="button" class="pill" id="gb">${opened ? "Auszug liegt vor" : "B-Blatt, 2,60 €"}</button>` : ""}
@@ -640,10 +684,15 @@ function bindPane(root) {
   const back = root.querySelector("#back");
   if (back) back.onclick = () => {
     state.inspect = false;
+    state.cover = false;
     renderPane();
   };
   const next = root.querySelector("#next");
   if (next) next.onclick = nextParcel;
+  const prev = root.querySelector("#prev");
+  if (prev) prev.onclick = () => stepParcel(-1);
+  const nextFile = root.querySelector("#next-file");
+  if (nextFile) nextFile.onclick = () => stepParcel(1);
   const gb = root.querySelector("#gb");
   if (gb) {
     gb.onclick = () => {
@@ -683,6 +732,7 @@ function openParcel(id, move) {
   state.parcelId = id;
   state.stationId = null;
   if (state.view === "karte") state.inspect = true;
+  else state.cover = true;
   const p = parcelById(id);
   if (move !== false && p) fly(p.lat, p.lng, 12.25);
   refresh();
@@ -692,6 +742,7 @@ function openStation(id, move) {
   state.stationId = id;
   state.parcelId = null;
   if (state.view === "karte") state.inspect = true;
+  else state.cover = true;
   const s = stationById(id);
   if (move !== false && s) fly(s.lat, s.lng, 11.5);
   refresh();
@@ -701,7 +752,17 @@ function clearFocus() {
   state.parcelId = null;
   state.stationId = null;
   state.inspect = false;
+  state.cover = false;
   refresh();
+}
+
+function stepParcel(dir) {
+  const rows = filtered();
+  if (!rows.length) return;
+  let index = rows.findIndex((p) => p.id === state.parcelId);
+  if (index < 0) index = 0;
+  else index = (index + dir + rows.length) % rows.length;
+  openParcel(rows[index].id, state.view === "karte");
 }
 
 function nextParcel() {
@@ -711,6 +772,7 @@ function nextParcel() {
 
 function setView(name) {
   state.view = name;
+  state.cover = false;
   if (name === "karte") state.inspect = false;
   document.querySelectorAll("#nav button").forEach((btn) => btn.classList.toggle("on", btn.dataset.view === name));
   renderPane();
